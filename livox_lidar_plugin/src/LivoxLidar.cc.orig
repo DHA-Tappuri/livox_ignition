@@ -1,0 +1,314 @@
+#include "livox_lidar_plugin/LivoxLidar.hh"
+#include <ignition/plugin/Register.hh>
+#include <ignition/common/Console.hh>
+#include "CustomMsg.pb.h"
+#include <ignition/gazebo/Model.hh>
+
+#include <random>
+#include <omp.h>
+
+#define DEG2RAD (M_PI / 180.0)
+
+using namespace livox_lidar_plugin;
+
+
+std::vector<LaserDirection> LoadLaserDirections(const std::string& filename, char delimiter = ',') {
+    std::vector<LaserDirection> directions;
+    std::ifstream file(filename);
+    std::string line;
+
+    if (!file.is_open()) {
+        std::cerr << "Failed to open file: " << filename << std::endl;
+        return directions;
+    }
+
+    // skip header
+    std::getline(file, line);
+
+    // load time, azimuth and zenith
+    while (std::getline(file, line)) {
+        std::stringstream ss(line);
+        double time_s, azimuth_rad, zenith_rad;
+
+        if (delimiter == ',') {
+            std::string token;
+            std::getline(ss, token, ','); time_s      = std::stod(token);
+            std::getline(ss, token, ','); azimuth_rad = std::stod(token) * DEG2RAD;
+            std::getline(ss, token, ','); zenith_rad  = std::stod(token) * DEG2RAD;
+        } else {
+            ss >> time_s >> azimuth_rad >> zenith_rad;
+            continue;
+        }
+        
+        ignition::math::Vector3d dir(
+          std::cos(azimuth_rad) * std::cos(zenith_rad),
+          std::cos(azimuth_rad) * std::sin(zenith_rad),
+          std::sin(azimuth_rad)
+        );        
+        dir.Normalize();
+        
+        directions.push_back({ 
+            static_cast<uint32_t>(time_s * 1e9),
+            dir
+        });
+    }
+
+    return directions;
+}
+
+
+
+// constructor
+LivoxLidar::LivoxLidar()
+{
+  std::cerr << "Livox LiDAR Plugin Constructed." << std::endl;
+}
+
+
+// destructor
+void LivoxLidar::Configure(const ignition::gazebo::Entity &_entity, const std::shared_ptr<const sdf::Element> &_sdf, ignition::gazebo::EntityComponentManager &_ecm, ignition::gazebo::EventManager &_eventMgr)
+{
+  std::cerr << "LivoxLiDAR Configure called." << std::endl;
+
+  // load parameters
+  
+  // sample
+  if (_sdf->HasElement("samples")) 
+  {
+    _samples = _sdf->Get<unsigned int>("samples");
+  }
+  else
+  {
+    _samples = 24000;
+  }
+  
+  // downsample
+  if (_sdf->HasElement("downsample")) 
+  {
+    _downsample = _sdf->Get<unsigned int>("downsample");
+  }
+  else
+  {
+    _downsample = 1;  
+  }
+  
+  // topic
+  if (_sdf->HasElement("topic")) 
+  {
+    _topic = _sdf->Get<std::string>("topic");
+  }
+  else
+  {
+    _topic = "/livox_points";  
+  }
+
+  // frame
+  if (_sdf->HasElement("frame_id")) 
+  {
+    _frame_id = _sdf->Get<std::string>("frame_id");
+  }
+  else
+  {
+    _frame_id = "livox_frame";  
+  }
+  
+  // show result
+  std::cerr << "[LivoxLidar] samples    : " << _samples    << std::endl;
+  std::cerr << "[LivoxLidar] downsample : " << _downsample << std::endl;
+  std::cerr << "[LivoxLidar] topic      : " << _topic      << std::endl;
+  std::cerr << "[LivoxLidar] frame ID   : " << _frame_id   << std::endl;
+  
+  // save entity
+  _sensorEntity = _entity;
+  
+  // load scan pattern
+  _direction_table = LoadLaserDirections( "/home/ubuntu/ros2_ws/src/livox_ignition/livox_lidar_plugin/scan_mode/avia.csv" );
+  
+  // initialize topic
+  _pub = _node.Advertise<LivoxCustomMsg::CustomMsg>(_topic);
+  if (!_pub.Valid()) {
+    std::cerr << "Failed to create publisher for " << _topic << std::endl;
+  }  
+}
+
+
+// update
+void LivoxLidar::Update(const ignition::gazebo::UpdateInfo &_info, ignition::gazebo::EntityComponentManager &_ecm)
+{
+  //std::cerr << "LivoxLiDAR update called." << std::endl;
+
+  // start check  
+  double _sim_time  = std::chrono::duration_cast<std::chrono::duration<double>>(_info.simTime).count();
+  if( _sim_time < 1.0 )
+  {
+    return;
+  }
+
+  // time period check
+  if (_sim_time - _last_scan_time < _scan_period_sec)
+  {
+    return;
+  }
+  _last_scan_time = _sim_time;
+
+  // initialize check
+  if(!_initialized)
+  {
+    // initialize engine
+    _engine     = ignition::rendering::engine("ogre2");
+    if(!_engine)
+    {
+      std::cerr << "Engine Initialize Error!" << std::endl;  
+      return;
+    }
+    
+    // initialize scene
+    _scene      = _engine->SceneByIndex(0);
+    if(!_scene)
+    {
+      std::cerr << "Scene Initialize Error!" << std::endl;  
+      return;
+    }
+    
+    // ray query
+    _ray_query = _scene->CreateRayQuery();
+    if(!_ray_query)
+    {
+      std::cerr << "RayQuery Initialize Error!" << std::endl;  
+      return;
+    }
+    
+    // initialize finished
+    _initialized = true;
+  }
+
+
+
+
+  // publish message
+  // get sensor pose
+  _sensorPose = ignition::gazebo::worldPose(_sensorEntity, _ecm);  
+  
+  LivoxCustomMsg::CustomMsg _ign_msg;
+  // header
+  _ign_msg.mutable_stamp()->CopyFrom(ignition::msgs::Convert(_info.simTime));
+  _ign_msg.set_frame_id(_frame_id);
+  
+  // time
+  _ign_msg.set_time_base(_info.simTime.count());
+  
+  // base ID
+  _ign_msg.set_lidar_id(1);
+  
+  // reserve
+  _ign_msg.set_rsvd_0(0);
+  _ign_msg.set_rsvd_1(0);
+  _ign_msg.set_rsvd_2(0);
+
+  std::vector<LivoxCustomMsg::CustomPoint> tmp_points(_samples / _downsample); // 一時バッファ
+  unsigned int valid_pts = 0;
+  
+  #pragma omp parallel for reduction(+:valid_pts)
+  for (int i = 0; i < _samples/_downsample ; i++)
+  {
+    unsigned int _scan_idx = _scan_start_index + i*_downsample;
+    if (_scan_idx >= _direction_table.size())
+    {
+      continue;
+    }
+    unsigned int idx = _scan_idx % _direction_table.size();
+    auto         dir = _direction_table[idx];
+    ignition::math::Vector3d __ori = _sensorPose.Pos();
+    ignition::math::Vector3d __dir = _sensorPose.Rot().RotateVector(dir.dir);
+    
+    auto _ray_query_local = _scene->CreateRayQuery();
+    _ray_query_local->SetOrigin(__ori);
+    _ray_query_local->SetDirection(__dir);
+    auto _ret = _ray_query_local->ClosestPoint();
+    
+    if (_ret)
+    {
+      auto _pt    = LivoxCustomMsg::CustomPoint();
+      auto _local = _sensorPose.Rot().RotateVectorReverse(_ret.point - __ori);
+
+      _pt.set_offset_time(dir.time_ns);
+      _pt.set_tag(1);
+      _pt.set_line(i);
+      _pt.set_reflectivity(255);
+      _pt.set_x(_local.X());
+      _pt.set_y(_local.Y());
+      _pt.set_z(_local.Z());
+
+      tmp_points[i] = _pt;
+      valid_pts++;
+    }
+  }
+  
+  for (int i = 0; i < tmp_points.size(); ++i)
+  {  
+    if (tmp_points[i].has_x())  // xが設定されている＝有効な点
+    {
+      auto point = _ign_msg.add_points();
+      point->CopyFrom(tmp_points[i]);
+    }
+  }
+  
+  /*
+  // points
+  unsigned int pts = 0;
+  for ( _scan_index = _scan_start_index, _scan_line_index = (int)(_scan_line_index/_samples) ; _scan_index < (_scan_start_index+_samples) ; _scan_index += _downsample )
+  {
+  
+    if( _scan_index >= _direction_table.size() )
+    {
+      return;
+    }
+    
+    unsigned int _i   = _scan_index % _direction_table.size();
+    auto         _dir = _direction_table[_i];
+    
+    ignition::math::Vector3d __ori = _sensorPose.Pos();
+    ignition::math::Vector3d __dir = _sensorPose.Rot().RotateVector(_dir.dir);
+    
+    _ray_query->SetOrigin(__ori);
+    _ray_query->SetDirection(__dir);    
+    auto _ret = _ray_query->ClosestPoint();
+    
+    if (_ret) {
+        auto _point = _ign_msg.add_points();
+        auto _lp = _sensorPose.Rot().RotateVectorReverse(_ret.point-__ori);
+
+        _point->set_offset_time(_dir.time_ns);
+        _point->set_tag(1);
+        _point->set_line(_scan_line_index);
+        _point->set_reflectivity(255);
+        
+        // point
+        _point->set_x(_lp.X());
+        _point->set_y(_lp.Y());
+        _point->set_z(_lp.Z());
+
+        pts++;
+    }
+  }
+  _scan_start_index = _scan_index % _direction_table.size();
+  */
+
+  // point num  
+  _ign_msg.set_point_num(tmp_points.size());
+
+  // publish message
+  if (_pub.Valid()) {
+    _pub.Publish(_ign_msg);
+  }
+
+}
+
+
+// ADD plugin
+IGNITION_ADD_PLUGIN(
+    livox_lidar_plugin::LivoxLidar,
+    ignition::gazebo::System,
+    ignition::gazebo::ISystemConfigure,
+    ignition::gazebo::ISystemUpdate
+)

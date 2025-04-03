@@ -1,0 +1,143 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <world name="default">
+    <plugin name="gz::sim::systems::Physics"          filename="gz-sim-physics-system" />
+    <plugin name="gz::sim::systems::UserCommands"     filename="gz-sim-user-commands-system" />
+    <plugin name="gz::sim::systems::SceneBroadcaster" filename="gz-sim-scene-broadcaster-system" />
+    <plugin name="gz::sim::systems::Contact"          filename="gz-sim-contact-system" />
+    <plugin name="gz::sim::systems::Sensors"          filename="gz-sim-sensors-system">
+        <render_engine>ogre2</render_engine>
+    </plugin>
+        
+    <model name="livox_lidar_model">
+      <pose>0 0 0 0 0 0</pose>
+      <static>true</static>
+      <link name="lidar_link">
+        <sensor name="livox_lidar_sensor" type="gpu_lidar">
+          <pose>0 0 0.25 0 0 0</pose>
+          <update_rate>10</update_rate>
+          <always_on>1</always_on>
+          <topic>/livox_lidar_sensor/scan</topic>
+          <visualize>true</visualize>
+          <ray>
+            <scan>
+              <horizontal>
+                <samples>1440</samples>
+                <resolution>1</resolution>
+                <min_angle>-3.1416</min_angle>
+                <max_angle>3.1416</max_angle>
+              </horizontal>
+              <vertical>
+                <samples>1440</samples>
+                <resolution>1</resolution>
+                <min_angle>-3.1416</min_angle>
+                <max_angle>3.1416</max_angle>
+              </vertical>
+            </scan>
+            <range>
+              <min>0.1</min>
+              <max>50.0</max>
+            </range>          
+          </ray>
+          <plugin name="livox_lidar_plugin::LivoxLidar" filename="liblivox_lidar_plugin.so">
+            <sensor_name>livox_lidar</sensor_name>
+            <topic>/livox_points</topic>
+            <frame_id>livox_frame</frame_id>
+            <samples>24000</samples>
+            <downsample>1</downsample>
+            <sensor_topic>/livox_lidar_sensor/scan</sensor_topic>
+            <h_samples>1440</h_samples>
+            <v_samples>1440</v_samples>            
+          </plugin>          
+        </sensor>
+      </link>
+    </model>
+
+  
+    <model name="obstacle_1">
+      <static>true</static>
+      <pose>3 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>1 1 1</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>1 1 1</size>
+            </box>
+          </geometry>
+        </visual>
+      </link>
+    </model>
+
+    <model name="obstacle_2">
+      <static>true</static>
+      <pose>-3 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <sphere>
+              <radius>0.5</radius>
+            </sphere>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <sphere>
+              <radius>0.5</radius>
+            </sphere>
+          </geometry>
+        </visual>
+      </link>
+    </model>
+
+    <model name="obstacle_3">
+      <static>true</static>    
+      <pose>0 3 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.5</radius>
+              <length>1</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.5</radius>
+              <length>1</length>
+            </cylinder>
+          </geometry>
+        </visual>
+      </link>
+    </model>
+
+    <model name="obstacle_4">
+      <static>true</static>    
+      <pose>0 -3 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>1 1 1</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>1 1 1</size>
+            </box>
+          </geometry>
+        </visual>
+      </link>
+    </model>
+  </world>
+</sdf>

@@ -1,0 +1,81 @@
+#ifndef LIVOX_LIDAR_HH_
+#define LIVOX_LIDAR_HH_
+
+#include <ignition/msgs.hh>
+
+#include <ignition/gazebo/System.hh>
+#include <ignition/gazebo/Sensor.hh>
+#include <ignition/gazebo/Entity.hh>
+#include <ignition/gazebo/Util.hh>
+#include <ignition/gazebo/components/PoseCmd.hh>
+
+#include <ignition/plugin/Register.hh>
+#include <ignition/transport/Node.hh>
+
+#include <ignition/math/Vector3.hh>
+#include <ignition/math/Pose3.hh>
+
+#include <ignition/rendering/Scene.hh>
+#include <ignition/rendering/RayQuery.hh>
+#include <ignition/rendering/RenderEngine.hh>
+#include <ignition/rendering/RenderingIface.hh>
+
+
+
+namespace livox_lidar_plugin
+{
+
+  struct LaserDirection {
+    uint32_t                 time_ns;
+    ignition::math::Vector3d dir;
+  };
+
+  class LivoxLidar : public ignition::gazebo::System,
+                     public ignition::gazebo::ISystemConfigure,
+                     public ignition::gazebo::ISystemUpdate
+  {
+  public:
+    LivoxLidar();
+    ~LivoxLidar() override = default;
+    
+    void Configure(const ignition::gazebo::Entity &_entity,
+                   const std::shared_ptr<const sdf::Element> &_sdf,
+                   ignition::gazebo::EntityComponentManager &_ecm,
+                   ignition::gazebo::EventManager &_eventMgr) override;
+
+    void Update(const ignition::gazebo::UpdateInfo &_info,
+                ignition::gazebo::EntityComponentManager &_ecm) override;
+                
+  private:
+    ignition::transport::Node            _node;
+    ignition::transport::Node::Publisher _pub;
+    
+    std::vector<LaserDirection>          _direction_table;
+  
+    bool                                 _initialized      = false;  
+    ignition::rendering::RenderEngine*   _engine;  
+    ignition::rendering::ScenePtr        _scene;
+    ignition::rendering::RayQueryPtr     _ray_query;
+    
+    double                               _last_scan_time   = 0.0;    
+    double                               _scan_period_sec  = 0.1;
+    
+    unsigned int                         _samples          = 24000;
+    unsigned int                         _downsample       = 1;
+    unsigned int                         _scan_index       = 0;    
+    unsigned int                         _scan_start_index = 0;
+    unsigned int                         _scan_line_index  = 0;
+    
+    std::string                          _topic            = "/livox_points";
+    std::string                          _frame_id         = "livox_frame";
+    
+    ignition::math::Pose3d               _sensorPose;
+    ignition::gazebo::Entity             _sensorEntity;
+    
+std::chrono::steady_clock::duration _lastSimTime;
+std::chrono::steady_clock::duration _lastRealTime;
+  };
+}
+
+#endif
+
